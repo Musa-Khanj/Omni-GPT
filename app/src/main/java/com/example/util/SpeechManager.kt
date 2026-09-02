@@ -96,42 +96,48 @@ class SpeechManager(private val context: Context) {
 
         stopListening()
 
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
-            setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {
-                    _isListening.value = true
-                }
-
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() {
-                    _isListening.value = false
-                }
-
-                override fun onError(error: Int) {
-                    _isListening.value = false
-                }
-
-                override fun onResults(results: Bundle?) {
-                    _isListening.value = false
-                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    val result = matches?.firstOrNull().orEmpty()
-                    if (result.isNotBlank()) {
-                        onResult(result)
+        try {
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
+                setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) {
+                        _isListening.value = true
                     }
-                }
 
-                override fun onPartialResults(partialResults: Bundle?) {
-                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    val partial = matches?.firstOrNull().orEmpty()
-                    if (partial.isNotBlank()) {
-                        _recognizedText.value = partial
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(rmsdB: Float) {}
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onEndOfSpeech() {
+                        _isListening.value = false
                     }
-                }
 
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
+                    override fun onError(error: Int) {
+                        _isListening.value = false
+                    }
+
+                    override fun onResults(results: Bundle?) {
+                        _isListening.value = false
+                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        val result = matches?.firstOrNull().orEmpty()
+                        if (result.isNotBlank()) {
+                            onResult(result)
+                        }
+                    }
+
+                    override fun onPartialResults(partialResults: Bundle?) {
+                        val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        val partial = matches?.firstOrNull().orEmpty()
+                        if (partial.isNotBlank()) {
+                            _recognizedText.value = partial
+                        }
+                    }
+
+                    override fun onEvent(eventType: Int, params: Bundle?) {}
+                })
+            }
+        } catch (e: Exception) {
+            Log.e("SpeechManager", "Error creating SpeechRecognizer", e)
+            _isListening.value = false
+            return
         }
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
