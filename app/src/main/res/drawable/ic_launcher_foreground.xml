@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Centered within 66dp safe zone: X: 21-87, Y: 21-87, Center: (54, 54) -->
+    <!-- Inner glowing ring -->
+    <path
+        android:fillColor="#10A37F"
+        android:pathData="M54,26 C69.46,26 82,38.54 82,54 C82,69.46 69.46,82 54,82 C38.54,82 26,69.46 26,54 C26,38.54 38.54,26 54,26 Z" />
+    <!-- White geometric AI spark/flower lines -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,34 C55.6,44 64,52.4 74,54 C64,55.6 55.6,64 54,74 C52.4,64 44,55.6 34,54 C44,52.4 52.4,44 54,34 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,40 C47,47 54,49 61,40 C61,47 68,54 75,61 C68,61 61,68 54,75 C54,68 47,61 40,61 C47,54 47,47 40,40 Z" />
+    <!-- Central spark point -->
+    <path
+        android:fillColor="#102A24"
+        android:pathData="M54,49 A5,5 0 1,0 54,59 A5,5 0 1,0 54,49 Z" />
+</vector>
