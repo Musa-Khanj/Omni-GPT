@@ -88,6 +88,7 @@ fun MessageBubble(
     onSpeakToggle: () -> Unit = {},
     onRegenerate: () -> Unit = {},
     onExecuteCode: ((String, String) -> Unit)? = null,
+    onSpeakText: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val isUser = message.role == "user"
@@ -276,7 +277,8 @@ fun MessageBubble(
                                     Spacer(modifier = Modifier.height(10.dp))
                                     VideoScenesCard(
                                         scenesJson = message.videoScenesJson,
-                                        aspectRatio = message.generatedVideoAspect ?: "16:9"
+                                        aspectRatio = message.generatedVideoAspect ?: "16:9",
+                                        onSpeakScene = onSpeakText
                                     )
                                 }
 
@@ -613,7 +615,8 @@ fun GroundingSourcesSection(
 @Composable
 fun VideoScenesCard(
     scenesJson: String,
-    aspectRatio: String
+    aspectRatio: String,
+    onSpeakScene: ((String) -> Unit)? = null
 ) {
     val scenes = remember(scenesJson) {
         val list = mutableListOf<VideoScene>()
@@ -752,6 +755,9 @@ fun VideoScenesCard(
                         modifier = Modifier.clickable {
                             activeSceneIndex = index
                             isPlaying = false
+                            if (s.narration.isNotBlank()) {
+                                onSpeakScene?.invoke(s.narration)
+                            }
                         }
                     ) {
                         Text(
@@ -777,6 +783,9 @@ fun VideoScenesCard(
                             for (i in 0 until scenes.size) {
                                 if (!isPlaying) break
                                 activeSceneIndex = i
+                                if (scenes[i].narration.isNotBlank()) {
+                                    onSpeakScene?.invoke(scenes[i].narration)
+                                }
                                 delay((scenes[i].durationSec * 1000L).coerceAtLeast(2000L))
                             }
                             isPlaying = false

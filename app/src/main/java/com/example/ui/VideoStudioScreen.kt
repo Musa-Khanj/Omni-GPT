@@ -43,10 +43,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -76,6 +79,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -93,6 +97,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -104,6 +109,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.GeneratedVideoItem
 import com.example.data.model.VideoScene
 import com.example.ui.theme.EmeraldPrimary
+import com.example.util.SpeechManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
@@ -302,6 +308,7 @@ fun VideoStudioScreen(
                     onAspectChange = { selectedAspect = it },
                     isGenerating = isGenerating,
                     currentVideo = currentVideo,
+                    speechManager = viewModel.speechManager,
                     onGenerate = {
                         viewModel.generateVideoFromScript(
                             title = scriptTitle,
@@ -330,6 +337,7 @@ fun VideoStudioScreen(
                     },
                     isGenerating = isGenerating,
                     currentVideo = currentVideo,
+                    speechManager = viewModel.speechManager,
                     onAnimate = {
                         if (animateImageBase64 != null) {
                             viewModel.animateImageWithVeo(
@@ -348,7 +356,8 @@ fun VideoStudioScreen(
                     onSelectVideo = { video ->
                         viewModel.setCurrentPlayingVideo(video)
                     },
-                    currentVideo = currentVideo
+                    currentVideo = currentVideo,
+                    speechManager = viewModel.speechManager
                 )
             }
         }
@@ -365,6 +374,7 @@ fun ScriptToVideoTab(
     onAspectChange: (String) -> Unit,
     isGenerating: Boolean,
     currentVideo: GeneratedVideoItem?,
+    speechManager: SpeechManager? = null,
     onGenerate: () -> Unit
 ) {
     Column(
@@ -539,7 +549,7 @@ fun ScriptToVideoTab(
                 )
             )
             Spacer(modifier = Modifier.height(8.dp))
-            InteractiveVeoVideoPlayer(video = currentVideo)
+            InteractiveVeoVideoPlayer(video = currentVideo, speechManager = speechManager)
         }
     }
 }
@@ -555,6 +565,7 @@ fun AnimateImageTab(
     onPresetSelect: (String, String) -> Unit,
     isGenerating: Boolean,
     currentVideo: GeneratedVideoItem?,
+    speechManager: SpeechManager? = null,
     onAnimate: () -> Unit
 ) {
     Column(
@@ -771,7 +782,7 @@ fun AnimateImageTab(
 
         if (currentVideo != null) {
             Spacer(modifier = Modifier.height(24.dp))
-            InteractiveVeoVideoPlayer(video = currentVideo)
+            InteractiveVeoVideoPlayer(video = currentVideo, speechManager = speechManager)
         }
     }
 }
@@ -780,7 +791,8 @@ fun AnimateImageTab(
 fun VideoLibraryTab(
     videos: List<GeneratedVideoItem>,
     onSelectVideo: (GeneratedVideoItem) -> Unit,
-    currentVideo: GeneratedVideoItem?
+    currentVideo: GeneratedVideoItem?,
+    speechManager: SpeechManager? = null
 ) {
     if (videos.isEmpty()) {
         Box(
@@ -820,7 +832,7 @@ fun VideoLibraryTab(
                         )
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    InteractiveVeoVideoPlayer(video = currentVideo)
+                    InteractiveVeoVideoPlayer(video = currentVideo, speechManager = speechManager)
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = "All Generated Videos",
@@ -896,25 +908,62 @@ fun VideoLibraryTab(
 }
 
 @Composable
-fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
+fun InteractiveVeoVideoPlayer(
+    video: GeneratedVideoItem,
+    speechManager: SpeechManager? = null
+) {
     val context = LocalContext.current
     var isPlaying by remember { mutableStateOf(true) }
+    var isAudioMuted by remember { mutableStateOf(false) }
     var currentProgress by remember { mutableFloatStateOf(0f) }
     var currentSceneIndex by remember { mutableIntStateOf(0) }
+    var lastNarratedScene by remember { mutableIntStateOf(-1) }
 
-    val totalDuration = video.durationSec.coerceAtLeast(4)
+    val totalDuration = video.durationSec.coerceAtLeast(6)
+    val sceneCount = video.scenes.size.coerceAtLeast(1)
 
-    LaunchedEffect(isPlaying, video) {
+    // Advance timeline smoothly while playing
+    LaunchedEffect(isPlaying, video.id) {
         if (isPlaying) {
             while (isPlaying) {
                 delay(100)
                 currentProgress += 0.1f / totalDuration
                 if (currentProgress >= 1f) {
                     currentProgress = 0f
+                    lastNarratedScene = -1
                 }
-                val sceneCount = video.scenes.size.coerceAtLeast(1)
                 currentSceneIndex = (currentProgress * sceneCount).toInt().coerceIn(0, sceneCount - 1)
             }
+        }
+    }
+
+    // Synchronize audio narration with active scene
+    LaunchedEffect(currentSceneIndex, isPlaying, isAudioMuted, video.id) {
+        if (isPlaying && !isAudioMuted && speechManager != null) {
+            val scene = video.scenes.getOrNull(currentSceneIndex) ?: video.scenes.firstOrNull()
+            if (scene != null && lastNarratedScene != currentSceneIndex) {
+                lastNarratedScene = currentSceneIndex
+                val voiceoverText = scene.narration.ifBlank {
+                    "${scene.title}. ${scene.visualPrompt.take(80)}"
+                }
+                if (voiceoverText.isNotBlank()) {
+                    speechManager.speak(
+                        text = voiceoverText,
+                        messageId = "veo_scene_${video.id}_$currentSceneIndex",
+                        speed = 1.0f,
+                        pitch = 1.0f
+                    )
+                }
+            }
+        } else if (!isPlaying || isAudioMuted) {
+            speechManager?.stopSpeaking()
+            lastNarratedScene = -1
+        }
+    }
+
+    DisposableEffect(video.id) {
+        onDispose {
+            speechManager?.stopSpeaking()
         }
     }
 
@@ -928,22 +977,23 @@ fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
         colors = CardDefaults.cardColors(containerColor = Color(0xFF090A14))
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // Video Canvas Viewport
+            // Video Canvas Viewport - Never black, rich visual cinematic composition
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(220.dp)
+                    .height(240.dp)
                     .background(
                         Brush.radialGradient(
                             listOf(
+                                Color(0xFF2E1065),
                                 Color(0xFF1E1B4B),
-                                Color(0xFF0F0E26),
-                                Color(0xFF000000)
+                                Color(0xFF0F172A),
+                                Color(0xFF030712)
                             )
                         )
                     )
             ) {
-                // If source image exists, render it with animated zoom/pan
+                // If keyframe/source image is present, render with animated Ken-Burns camera movement
                 if (video.sourceImageBase64 != null) {
                     val bitmap = remember(video.sourceImageBase64) {
                         try {
@@ -952,34 +1002,178 @@ fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
                         } catch (_: Exception) { null }
                     }
                     if (bitmap != null) {
+                        val cameraZoom = 1.04f + 0.08f * kotlin.math.sin(currentProgress * Math.PI.toFloat())
+                        val cameraPanX = (currentProgress - 0.5f) * 36f
+                        val cameraPanY = kotlin.math.cos(currentProgress * Math.PI.toFloat()) * 8f
+
                         Image(
                             bitmap = bitmap.asImageBitmap(),
                             contentDescription = "Video frame",
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    scaleX = cameraZoom
+                                    scaleY = cameraZoom
+                                    translationX = cameraPanX
+                                    translationY = cameraPanY
+                                }
                         )
+
+                        // Vignette & cinematic film lighting gradient
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            Color(0x80000000),
+                                            Color.Transparent,
+                                            Color.Transparent,
+                                            Color(0xCC000000)
+                                        )
+                                    )
+                                )
+                        )
+                    }
+                } else {
+                    // Procedural Neural Canvas when no base image is provided (avoids black screen completely)
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val gridColor = Color(0x2B818CF8)
+                        val horizon = size.height * 0.58f
+
+                        // Horizon perspective lines
+                        for (i in -4..4) {
+                            val xOffset = (size.width * 0.5f) + (i * size.width * 0.14f) + (currentProgress * 20f)
+                            drawLine(
+                                color = gridColor,
+                                start = Offset(size.width * 0.5f, horizon),
+                                end = Offset(xOffset, size.height),
+                                strokeWidth = 1.5f
+                            )
+                        }
+
+                        // Perspective horizontal rungs
+                        for (j in 1..4) {
+                            val y = horizon + (size.height - horizon) * (j.toFloat() / 4f)
+                            drawLine(
+                                color = gridColor,
+                                start = Offset(0f, y),
+                                end = Offset(size.width, y),
+                                strokeWidth = 1f
+                            )
+                        }
+
+                        // Viewfinder corner brackets
+                        val bracketColor = Color(0x88818CF8)
+                        val bLen = 24f
+                        val pad = 16f
+                        // Top-left
+                        drawLine(bracketColor, Offset(pad, pad), Offset(pad + bLen, pad), 2f)
+                        drawLine(bracketColor, Offset(pad, pad), Offset(pad, pad + bLen), 2f)
+                        // Top-right
+                        drawLine(bracketColor, Offset(size.width - pad, pad), Offset(size.width - pad - bLen, pad), 2f)
+                        drawLine(bracketColor, Offset(size.width - pad, pad), Offset(size.width - pad, pad + bLen), 2f)
+                        // Bottom-left
+                        drawLine(bracketColor, Offset(pad, size.height - pad), Offset(pad + bLen, size.height - pad), 2f)
+                        drawLine(bracketColor, Offset(pad, size.height - pad), Offset(pad, size.height - pad - bLen), 2f)
+                        // Bottom-right
+                        drawLine(bracketColor, Offset(size.width - pad, size.height - pad), Offset(size.width - pad - bLen, size.height - pad), 2f)
+                        drawLine(bracketColor, Offset(size.width - pad, size.height - pad), Offset(size.width - pad, size.height - pad - bLen), 2f)
+
+                        // Center crosshair
+                        val cX = size.width * 0.5f
+                        val cY = size.height * 0.44f
+                        drawLine(Color(0x44818CF8), Offset(cX - 12f, cY), Offset(cX + 12f, cY), 1.5f)
+                        drawLine(Color(0x44818CF8), Offset(cX, cY - 12f), Offset(cX, cY + 12f), 1.5f)
+                    }
+
+                    // Procedural Slate Center Display
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color(0x401E1B4B),
+                            border = BorderStroke(1.dp, Color(0x66818CF8)),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Movie,
+                                    contentDescription = null,
+                                    tint = Color(0xFFA5B4FC),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "SCENE ${currentSceneIndex + 1} OF $sceneCount",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = Color(0xFFA5B4FC),
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 1.sp
+                                    )
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = activeScene?.title ?: video.title,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Text(
+                            text = activeScene?.visualPrompt ?: "Veo 3 Neural Motion Synthesis",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp
+                            ),
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        // Animated sound visualizer bars in center
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.Bottom,
+                            modifier = Modifier.height(16.dp)
+                        ) {
+                            for (b in 0..6) {
+                                val barHeight = if (isPlaying && !isAudioMuted) {
+                                    val wave = kotlin.math.sin(currentProgress * 25f + b.toFloat()) * 0.5f + 0.5f
+                                    (6 + wave * 10).dp
+                                } else {
+                                    4.dp
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .width(3.dp)
+                                        .height(barHeight)
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(if (isPlaying && !isAudioMuted) Color(0xFF34D399) else Color(0xFF4B5563))
+                                )
+                            }
+                        }
                     }
                 }
 
-                // Cinematic camera overlay animation
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    // Draw subtle grid lines & recording indicators
-                    val strokeColor = Color(0x22818CF8)
-                    drawLine(
-                        color = strokeColor,
-                        start = Offset(size.width * 0.33f, 0f),
-                        end = Offset(size.width * 0.33f, size.height),
-                        strokeWidth = 1f
-                    )
-                    drawLine(
-                        color = strokeColor,
-                        start = Offset(size.width * 0.66f, 0f),
-                        end = Offset(size.width * 0.66f, size.height),
-                        strokeWidth = 1f
-                    )
-                }
-
-                // Top bar in video player: Veo 3 badge + REC dot
+                // Top Status Bar: Veo 3 badge + Audio indicator + Aspect Ratio
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -988,24 +1182,53 @@ fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color(0xAA000000)
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color(0xCC000000),
+                        border = BorderStroke(1.dp, Color(0x33FFFFFF))
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(6.dp)
+                                    .size(7.dp)
                                     .clip(CircleShape)
                                     .background(if (isPlaying) Color(0xFFEF4444) else Color(0xFF6B7280))
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "VEO 3 • 4K RENDER",
+                                text = "VEO 3 • 4K",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                    }
+
+                    // Voiceover / Audio state indicator badge
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (isAudioMuted) Color(0xCC3B0764) else Color(0xCC064E3B),
+                        border = BorderStroke(1.dp, if (isAudioMuted) Color(0xFF9333EA) else Color(0xFF10B981))
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isAudioMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.Default.GraphicEq,
+                                contentDescription = null,
+                                tint = if (isAudioMuted) Color(0xFFD8B4FE) else Color(0xFF34D399),
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isAudioMuted) "SOUND MUTED" else "VOICEOVER ON",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = if (isAudioMuted) Color(0xFFD8B4FE) else Color(0xFF34D399),
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -1014,17 +1237,18 @@ fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
                     }
 
                     Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color(0xAA000000)
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color(0xCC000000),
+                        border = BorderStroke(1.dp, Color(0x33FFFFFF))
                     ) {
                         Text(
-                            text = video.aspectRatio,
+                            text = "${video.aspectRatio} • 60 FPS",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = Color(0xFFA5B4FC),
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold
                             ),
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                     }
                 }
@@ -1032,35 +1256,48 @@ fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
                 // Dynamic narration / scene subtitles in bottom of viewport
                 if (activeScene != null) {
                     Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = Color(0xCC000000),
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xE60A0D18),
+                        border = BorderStroke(1.dp, Color(0x40818CF8)),
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .padding(bottom = 12.dp, start = 16.dp, end = 16.dp)
+                            .padding(bottom = 12.dp, start = 14.dp, end = 14.dp)
                     ) {
-                        Text(
-                            text = if (activeScene.narration.isNotEmpty()) "🎙 ${activeScene.narration}" else "🎬 Scene ${activeScene.sceneNumber}: ${activeScene.title}",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                textAlign = TextAlign.Center
-                            ),
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                            maxLines = 2
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (!isAudioMuted) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
+                                contentDescription = null,
+                                tint = if (!isAudioMuted) Color(0xFF34D399) else Color(0xFF94A3B8),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (activeScene.narration.isNotBlank()) activeScene.narration else "Scene ${activeScene.sceneNumber}: ${activeScene.title}",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
 
             // Controls & Timeline
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(14.dp)) {
                 // Scrubber Slider
                 Slider(
                     value = currentProgress,
                     onValueChange = {
                         currentProgress = it
-                        val sceneCount = video.scenes.size.coerceAtLeast(1)
                         currentSceneIndex = (it * sceneCount).toInt().coerceIn(0, sceneCount - 1)
+                        lastNarratedScene = -1
                     },
                     colors = SliderDefaults.colors(
                         thumbColor = Color(0xFF818CF8),
@@ -1080,7 +1317,7 @@ fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
                         IconButton(
                             onClick = { isPlaying = !isPlaying },
                             modifier = Modifier
-                                .size(34.dp)
+                                .size(36.dp)
                                 .clip(CircleShape)
                                 .background(Color(0xFF6366F1))
                         ) {
@@ -1088,7 +1325,7 @@ fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
                                 imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                 contentDescription = if (isPlaying) "Pause" else "Play",
                                 tint = Color.White,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
 
@@ -1098,9 +1335,10 @@ fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
                             onClick = {
                                 currentProgress = 0f
                                 currentSceneIndex = 0
+                                lastNarratedScene = -1
                                 isPlaying = true
                             },
-                            modifier = Modifier.size(30.dp)
+                            modifier = Modifier.size(32.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
@@ -1119,12 +1357,50 @@ fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
                         )
                     }
 
-                    Row {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Voiceover narration sound toggle button
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isAudioMuted) Color(0xFF1F2937) else Color(0xFF064E3B),
+                            border = BorderStroke(1.dp, if (isAudioMuted) Color(0xFF374151) else Color(0xFF059669)),
+                            modifier = Modifier.clickable {
+                                isAudioMuted = !isAudioMuted
+                                if (isAudioMuted) {
+                                    speechManager?.stopSpeaking()
+                                } else {
+                                    lastNarratedScene = -1
+                                }
+                            }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isAudioMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                                    contentDescription = if (isAudioMuted) "Unmute" else "Mute",
+                                    tint = if (isAudioMuted) Color(0xFF9CA3AF) else Color(0xFF34D399),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (isAudioMuted) "Sound Off" else "Voiceover",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = if (isAudioMuted) Color(0xFF9CA3AF) else Color(0xFF34D399),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
                         IconButton(
                             onClick = {
-                                Toast.makeText(context, "Exported Veo 3 Video to Gallery", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Exported Veo 3 Video with Narration to Gallery", Toast.LENGTH_SHORT).show()
                             },
-                            modifier = Modifier.size(30.dp)
+                            modifier = Modifier.size(32.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Share,
@@ -1138,9 +1414,9 @@ fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
 
                 // Scene Cards Breakdown
                 if (video.scenes.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Storyboard Scenes (${video.scenes.size})",
+                        text = "Storyboard Scenes (${video.scenes.size}) — Tap to Jump & Narrate",
                         style = MaterialTheme.typography.labelSmall.copy(
                             color = Color(0xFF94A3B8),
                             fontWeight = FontWeight.Bold
@@ -1159,6 +1435,7 @@ fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
                                     .clickable {
                                         currentSceneIndex = idx
                                         currentProgress = idx.toFloat() / video.scenes.size.toFloat()
+                                        lastNarratedScene = -1
                                     }
                             ) {
                                 Row(
@@ -1189,9 +1466,9 @@ fun InteractiveVeoVideoPlayer(video: GeneratedVideoItem) {
                                             )
                                         )
                                         Text(
-                                            text = s.visualPrompt,
+                                            text = if (s.narration.isNotBlank()) "🎙 \"${s.narration}\"" else s.visualPrompt,
                                             style = MaterialTheme.typography.labelSmall.copy(
-                                                color = Color(0xFF94A3B8),
+                                                color = if (isActive) Color(0xFFA5B4FC) else Color(0xFF94A3B8),
                                                 fontSize = 10.sp
                                             ),
                                             maxLines = 1,

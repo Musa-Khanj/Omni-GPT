@@ -524,7 +524,10 @@ fun ChatScreen(
                                     viewModel.toggleSpeakMessage(message.id, message.content)
                                 },
                                 onRegenerate = { viewModel.regenerateLastResponse() },
-                                onExecuteCode = { _, _ -> viewModel.recordCodeExecution() }
+                                onExecuteCode = { _, _ -> viewModel.recordCodeExecution() },
+                                onSpeakText = { text ->
+                                    viewModel.toggleSpeakMessage("scene_${message.id}", text)
+                                }
                             )
                         }
                     }

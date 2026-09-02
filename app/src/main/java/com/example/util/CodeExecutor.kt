@@ -20,14 +20,29 @@ class CodeExecutor(private val context: Context) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var webView: WebView? = null
+    private var isInitializing = false
     private val logBuffer = StringBuilder()
     private var pendingDeferred: CompletableDeferred<String>? = null
 
-    init {
+    private fun ensureWebViewInitialized() {
+        if (webView != null || isInitializing) return
+        isInitializing = true
         mainHandler.post {
             try {
+                // Ensure directory structure exists to avoid Chromium simple_file_enumerator warnings
+                val cacheDir = context.applicationContext.cacheDir
+                val jsCache = java.io.File(cacheDir, "WebView/Default/HTTP Cache/Code Cache/js")
+                val wasmCache = java.io.File(cacheDir, "WebView/Default/HTTP Cache/Code Cache/wasm")
+                if (!jsCache.exists()) jsCache.mkdirs()
+                if (!wasmCache.exists()) wasmCache.mkdirs()
+
                 val wv = WebView(context.applicationContext)
-                wv.settings.javaScriptEnabled = true
+                wv.settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = false
+                    databaseEnabled = false
+                    setSupportZoom(false)
+                }
                 wv.addJavascriptInterface(JsBridge(), "AndroidConsole")
 
                 val html = """
@@ -60,9 +75,20 @@ class CodeExecutor(private val context: Context) {
                 """.trimIndent()
                 wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
                 webView = wv
-            } catch (e: Exception) {
-                // WebView initialization may fail on headless environments
+            } catch (_: Exception) {
+                // Headless environment fallback
+            } finally {
+                isInitializing = false
             }
+        }
+    }
+
+    fun destroy() {
+        mainHandler.post {
+            try {
+                webView?.destroy()
+                webView = null
+            } catch (_: Exception) {}
         }
     }
 
@@ -118,6 +144,8 @@ class CodeExecutor(private val context: Context) {
                 }
             })();
         """.trimIndent()
+
+        ensureWebViewInitialized()
 
         mainHandler.post {
             val wv = webView

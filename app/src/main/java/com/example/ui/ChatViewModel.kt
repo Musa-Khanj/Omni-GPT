@@ -363,9 +363,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val apiKey = _userPreferences.value.customApiKey.ifBlank { null }
             val scenes = repository.decomposeScriptToScenes(script, apiKey)
 
+            val heroVisualPrompt = scenes.firstOrNull()?.visualPrompt?.ifBlank { script.take(120) } ?: script.take(120)
+            _videoGenerationStatus.value = "Generating key visual frame with Flash Image..."
+            val imageAspect = if (aspectRatio == "9:16") "9:16" else if (aspectRatio == "1:1") "1:1" else "16:9"
+            val heroImageResult = repository.generateImage(
+                prompt = "$heroVisualPrompt, high quality cinematic movie scene, ultra realistic 4k, dramatic film lighting",
+                aspectRatio = imageAspect,
+                apiKeyOverride = apiKey
+            )
+            val heroImageBase64 = heroImageResult.getOrNull()
+
             _videoGenerationStatus.value = "Synthesizing dynamic video scenes with Veo 3..."
-            val videoResult = repository.generateVideo(
-                prompt = scenes.firstOrNull()?.visualPrompt ?: script.take(120),
+            repository.generateVideo(
+                prompt = heroVisualPrompt,
+                imageBase64 = heroImageBase64,
                 resolution = "720p",
                 aspectRatio = aspectRatio,
                 apiKeyOverride = apiKey
@@ -375,8 +386,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 title = title.ifBlank { "Cinematic Video Clip" },
                 script = script,
                 visualPrompt = scenes.firstOrNull()?.visualPrompt ?: script,
+                sourceImageBase64 = heroImageBase64,
                 aspectRatio = aspectRatio,
-                durationSec = scenes.sumOf { it.durationSec },
+                durationSec = scenes.sumOf { it.durationSec }.coerceAtLeast(6),
                 scenes = scenes
             )
 
@@ -394,6 +406,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     content = "🎬 **Veo 3 Video Generated: ${newVideo.title}**\n\n*Script breakdown into ${scenes.size} cinematic scenes:* \n" +
                             scenes.joinToString("\n") { s -> "• **Scene ${s.sceneNumber} (${s.durationSec}s)**: ${s.title} — *${s.narration}*" } +
                             "\n\n*Aspect Ratio: $aspectRatio | Engine: Google Veo 3*",
+                    imageBase64 = heroImageBase64,
                     generatedVideoPrompt = newVideo.visualPrompt,
                     generatedVideoAspect = aspectRatio,
                     videoScenesJson = serializeVideoScenes(scenes)
@@ -697,5 +710,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         speechManager.destroy()
+        codeExecutor.destroy()
     }
 }

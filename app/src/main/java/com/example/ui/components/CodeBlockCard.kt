@@ -36,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,6 +75,11 @@ fun CodeBlockCard(
     var showTerminal by remember { mutableStateOf(false) }
 
     val codeExecutor = remember { CodeExecutor(context) }
+    DisposableEffect(Unit) {
+        onDispose {
+            codeExecutor.destroy()
+        }
+    }
     val displayLang = if (language.isBlank() || language == "code") "code" else language.lowercase()
     val displayFileName = when (displayLang) {
         "python", "py" -> "python_executor.py"
