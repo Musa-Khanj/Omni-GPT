@@ -1,6 +1,6 @@
 {
   "name": "ChatGPT AI",
-  "description": "Real-time AI assistant with multimodal support, code execution, customizable dashboard, and chat history.",
+  "description": "Creative AI assistant with Veo 3 video generation from blog posts/scripts/images, fast image creation and editing with Flash Image, and real-time Google Search grounding & fact-checking.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

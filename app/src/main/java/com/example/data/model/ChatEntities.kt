@@ -37,7 +37,53 @@ data class ChatMessage(
     val imageUri: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
     val codeExecutionOutput: String? = null,
-    val isError: Boolean = false
+    val isError: Boolean = false,
+    val generatedVideoPrompt: String? = null,
+    val generatedVideoAspect: String? = null,
+    val videoScenesJson: String? = null,
+    val groundingSourcesJson: String? = null,
+    val searchQueriesJson: String? = null,
+    val factCheckVerdict: String? = null
+)
+
+data class GroundingSource(
+    val title: String,
+    val url: String
+)
+
+data class VideoScene(
+    val sceneNumber: Int,
+    val title: String,
+    val visualPrompt: String,
+    val narration: String,
+    val durationSec: Int = 4
+)
+
+data class FactCheckResult(
+    val claim: String,
+    val verdict: String, // "Verified True", "Misleading / False", "Unconfirmed / Developing"
+    val summary: String,
+    val keyPoints: List<String> = emptyList(),
+    val sources: List<GroundingSource> = emptyList()
+)
+
+data class GeneratedImageItem(
+    val id: String = UUID.randomUUID().toString(),
+    val prompt: String,
+    val base64: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+data class GeneratedVideoItem(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String,
+    val script: String,
+    val visualPrompt: String,
+    val sourceImageBase64: String? = null,
+    val aspectRatio: String = "16:9",
+    val durationSec: Int = 6,
+    val scenes: List<VideoScene> = emptyList(),
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 data class UserPreferences(
@@ -50,7 +96,8 @@ data class UserPreferences(
     val speechRate: Float = 1.0f,
     val speechPitch: Float = 1.0f,
     val isDarkTheme: Boolean = true,
-    val customApiKey: String = ""
+    val customApiKey: String = "",
+    val enableGoogleSearch: Boolean = false
 )
 
 data class DashboardStats(

@@ -71,7 +71,9 @@ class ChatRepository(
         temperature: Float,
         thinkingLevel: String,
         apiKeyOverride: String?,
-        enableCodeExecution: Boolean
+        enableCodeExecution: Boolean,
+        enableGoogleSearch: Boolean = false,
+        onGroundingFound: ((sources: List<com.example.data.model.GroundingSource>, queries: List<String>) -> Unit)? = null
     ): Flow<String> {
         return geminiClient.streamGenerateContent(
             messages = messages,
@@ -80,8 +82,54 @@ class ChatRepository(
             temperature = temperature,
             thinkingLevel = thinkingLevel,
             apiKeyOverride = apiKeyOverride,
-            enableCodeExecution = enableCodeExecution
+            enableCodeExecution = enableCodeExecution,
+            enableGoogleSearch = enableGoogleSearch,
+            onGroundingFound = onGroundingFound
         )
+    }
+
+    suspend fun generateImage(
+        prompt: String,
+        inputImageBase64: String? = null,
+        aspectRatio: String = "1:1",
+        apiKeyOverride: String? = null
+    ): Result<String> {
+        return geminiClient.generateImage(
+            prompt = prompt,
+            inputImageBase64 = inputImageBase64,
+            aspectRatio = aspectRatio,
+            apiKeyOverride = apiKeyOverride
+        )
+    }
+
+    suspend fun generateVideo(
+        prompt: String,
+        imageBase64: String? = null,
+        resolution: String = "720p",
+        aspectRatio: String = "16:9",
+        apiKeyOverride: String? = null
+    ): Result<String> {
+        return geminiClient.generateVideo(
+            prompt = prompt,
+            imageBase64 = imageBase64,
+            resolution = resolution,
+            aspectRatio = aspectRatio,
+            apiKeyOverride = apiKeyOverride
+        )
+    }
+
+    suspend fun decomposeScriptToScenes(
+        script: String,
+        apiKeyOverride: String? = null
+    ): List<com.example.data.model.VideoScene> {
+        return geminiClient.decomposeScriptToScenes(script, apiKeyOverride)
+    }
+
+    suspend fun factCheckClaim(
+        claim: String,
+        apiKeyOverride: String? = null
+    ): com.example.data.model.FactCheckResult {
+        return geminiClient.factCheckClaim(claim, apiKeyOverride)
     }
 
     val sessionsCount: Flow<Int> = chatDao.getSessionsCount()

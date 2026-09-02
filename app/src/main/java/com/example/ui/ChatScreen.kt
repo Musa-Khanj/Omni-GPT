@@ -45,15 +45,21 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
@@ -103,6 +109,14 @@ import com.example.ui.components.SupportedModels
 import com.example.ui.theme.EmeraldPrimary
 import kotlinx.coroutines.launch
 
+enum class AppScreen {
+    CHAT,
+    VIDEO_STUDIO,
+    IMAGE_STUDIO,
+    SEARCH_FACT_CHECK,
+    DASHBOARD
+}
+
 val QuickPrompts = listOf(
     "Write a Python script to sort and analyze data",
     "Explain quantum computing like I'm five",
@@ -132,7 +146,7 @@ fun ChatScreen(
     val currentSpeakingId by viewModel.currentSpeakingId.collectAsState()
 
     var inputPrompt by remember { mutableStateOf("") }
-    var showDashboard by remember { mutableStateOf(false) }
+    var currentScreen by remember { mutableStateOf(AppScreen.CHAT) }
     var showModelMenu by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
@@ -166,33 +180,66 @@ fun ChatScreen(
         }
     }
 
-    if (showDashboard) {
-        DashboardView(
-            preferences = preferences,
-            stats = stats,
-            onPreferencesChanged = { viewModel.updatePreferences(it) },
-            onTestVoice = {
-                viewModel.speechManager.speak(
-                    text = "Hello! I am ChatGPT, your multimodal AI assistant.",
-                    messageId = "test_voice",
-                    speed = preferences.speechRate,
-                    pitch = preferences.speechPitch
-                )
-            },
-            onExportHistory = {
-                val markdown = viewModel.exportHistoryAsMarkdown()
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = ClipData.newPlainText("Chat History", markdown)
-                clipboard.setPrimaryClip(clip)
-                Toast.makeText(context, "History copied to clipboard as Markdown", Toast.LENGTH_SHORT).show()
-            },
-            onClearAllHistory = {
-                viewModel.clearAllHistory()
-                showDashboard = false
-            },
-            onBack = { showDashboard = false }
-        )
-        return
+    when (currentScreen) {
+        AppScreen.DASHBOARD -> {
+            DashboardView(
+                preferences = preferences,
+                stats = stats,
+                onPreferencesChanged = { viewModel.updatePreferences(it) },
+                onTestVoice = {
+                    viewModel.speechManager.speak(
+                        text = "Hello! I am ChatGPT, your multimodal AI assistant.",
+                        messageId = "test_voice",
+                        speed = preferences.speechRate,
+                        pitch = preferences.speechPitch
+                    )
+                },
+                onExportHistory = {
+                    val markdown = viewModel.exportHistoryAsMarkdown()
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = ClipData.newPlainText("Chat History", markdown)
+                    clipboard.setPrimaryClip(clip)
+                    Toast.makeText(context, "History copied to clipboard as Markdown", Toast.LENGTH_SHORT).show()
+                },
+                onClearAllHistory = {
+                    viewModel.clearAllHistory()
+                    currentScreen = AppScreen.CHAT
+                },
+                onBack = { currentScreen = AppScreen.CHAT }
+            )
+            return
+        }
+        AppScreen.VIDEO_STUDIO -> {
+            VideoStudioScreen(
+                viewModel = viewModel,
+                onBack = { currentScreen = AppScreen.CHAT }
+            )
+            return
+        }
+        AppScreen.IMAGE_STUDIO -> {
+            ImageStudioScreen(
+                viewModel = viewModel,
+                onBack = { currentScreen = AppScreen.CHAT },
+                onNavigateToVideoWithImage = { base64 ->
+                    viewModel.animateImageWithVeo(
+                        imageBitmapBase64 = base64,
+                        animationPrompt = "Dynamic cinematic 360 camera motion",
+                        stylePreset = "Dynamic Product Ad"
+                    )
+                    currentScreen = AppScreen.VIDEO_STUDIO
+                }
+            )
+            return
+        }
+        AppScreen.SEARCH_FACT_CHECK -> {
+            SearchFactCheckScreen(
+                viewModel = viewModel,
+                onBack = { currentScreen = AppScreen.CHAT },
+                onOpenChat = { currentScreen = AppScreen.CHAT }
+            )
+            return
+        }
+        AppScreen.CHAT -> { /* Continue to chat Scaffold */ }
     }
 
     ModalNavigationDrawer(
@@ -217,7 +264,7 @@ fun ChatScreen(
                 },
                 onOpenDashboard = {
                     coroutineScope.launch { drawerState.close() }
-                    showDashboard = true
+                    currentScreen = AppScreen.DASHBOARD
                 }
             )
         }
@@ -347,13 +394,44 @@ fun ChatScreen(
                         // Right Glass Action Buttons
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            // Google Search Grounding Quick Toggle Pill
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (preferences.enableGoogleSearch) Color(0x330EA5E9) else Color(0x14FFFFFF),
+                                border = BorderStroke(1.dp, if (preferences.enableGoogleSearch) Color(0xFF38BDF8) else Color(0x22FFFFFF)),
+                                modifier = Modifier
+                                    .clickable { viewModel.toggleGoogleSearch() }
+                                    .testTag("appbar_search_grounding_toggle")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Language,
+                                        contentDescription = "Search Grounding",
+                                        tint = if (preferences.enableGoogleSearch) Color(0xFF38BDF8) else Color(0xFF94A3B8),
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = if (preferences.enableGoogleSearch) "Search ON" else "Search",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            color = if (preferences.enableGoogleSearch) Color(0xFF38BDF8) else Color(0xFF94A3B8),
+                                            fontSize = 10.sp,
+                                            fontWeight = if (preferences.enableGoogleSearch) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    )
+                                }
+                            }
+
                             // New Chat button
                             IconButton(
                                 onClick = { viewModel.createNewChat() },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(36.dp)
                                     .clip(CircleShape)
                                     .background(Color(0x1FFFFFFF))
                                     .border(1.dp, Color(0x28FFFFFF), CircleShape)
@@ -371,7 +449,7 @@ fun ChatScreen(
                             IconButton(
                                 onClick = { coroutineScope.launch { drawerState.open() } },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(36.dp)
                                     .clip(CircleShape)
                                     .background(Color(0x14FFFFFF))
                                     .border(1.dp, Color(0x1FFFFFFF), CircleShape)
@@ -387,9 +465,9 @@ fun ChatScreen(
 
                             // Dashboard / Tune button
                             IconButton(
-                                onClick = { showDashboard = true },
+                                onClick = { currentScreen = AppScreen.DASHBOARD },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(36.dp)
                                     .clip(CircleShape)
                                     .background(Color(0x14FFFFFF))
                                     .border(1.dp, Color(0x1FFFFFFF), CircleShape)
@@ -508,17 +586,20 @@ fun ChatScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     val pills = listOf(
-                        "✨ Creative Mode" to { inputPrompt = "Write a creative story exploring " },
-                        "🔍 Deep Research" to { inputPrompt = "Provide comprehensive, in-depth research on " },
+                        "🎬 Veo 3 Video Studio" to { currentScreen = AppScreen.VIDEO_STUDIO },
+                        "🎨 Flash Image Studio" to { currentScreen = AppScreen.IMAGE_STUDIO },
+                        "🔍 Fact-Check Claim" to { currentScreen = AppScreen.SEARCH_FACT_CHECK },
+                        (if (preferences.enableGoogleSearch) "🌐 Live Search: ON" else "🌐 Live Search: OFF") to { viewModel.toggleGoogleSearch() },
                         "📁 Attach Image" to {
                             photoPickerLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                             )
                         },
+                        "✨ Creative Script" to { inputPrompt = "Write a creative short video script about " },
                         "⚡ ChatGPT 4o" to {
                             viewModel.updatePreferences(preferences.copy(model = "gemini-3.5-flash"))
                         },
-                        "🧠 ChatGPT o1" to {
+                        "🧠 ChatGPT o1 Pro" to {
                             viewModel.updatePreferences(preferences.copy(model = "gemini-3.1-pro-preview"))
                         }
                     )
@@ -694,20 +775,22 @@ fun ChatScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp)
-                            .padding(horizontal = 20.dp),
+                            .height(58.dp)
+                            .padding(horizontal = 8.dp),
                         horizontalArrangement = Arrangement.SpaceAround,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Chat Tab (Active)
+                        // 1. Chat Tab (Active)
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable { /* Active screen */ }
+                            modifier = Modifier
+                                .clickable { currentScreen = AppScreen.CHAT }
+                                .testTag("bottom_nav_chat")
                         ) {
                             Box(
                                 modifier = Modifier
                                     .height(26.dp)
-                                    .width(44.dp)
+                                    .width(42.dp)
                                     .clip(RoundedCornerShape(14.dp))
                                     .background(Color(0x336366F1)),
                                 contentAlignment = Alignment.Center
@@ -731,15 +814,92 @@ fun ChatScreen(
                             )
                         }
 
-                        // Space / Dashboard Tab
+                        // 2. Veo 3 Video Studio Tab
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable { showDashboard = true }
+                            modifier = Modifier
+                                .clickable { currentScreen = AppScreen.VIDEO_STUDIO }
+                                .testTag("bottom_nav_veo")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Movie,
+                                contentDescription = "Veo 3",
+                                tint = Color(0xFF818CF8),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "VEO 3",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF818CF8),
+                                    letterSpacing = 0.5.sp
+                                )
+                            )
+                        }
+
+                        // 3. Image Studio Tab
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .clickable { currentScreen = AppScreen.IMAGE_STUDIO }
+                                .testTag("bottom_nav_image")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Brush,
+                                contentDescription = "Image Studio",
+                                tint = Color(0xFF34D399),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "IMAGE",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF34D399),
+                                    letterSpacing = 0.5.sp
+                                )
+                            )
+                        }
+
+                        // 4. Live Search & Fact-Check Tab
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .clickable { currentScreen = AppScreen.SEARCH_FACT_CHECK }
+                                .testTag("bottom_nav_search")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Language,
+                                contentDescription = "Search Agent",
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "SEARCH",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF38BDF8),
+                                    letterSpacing = 0.5.sp
+                                )
+                            )
+                        }
+
+                        // 5. Space / Dashboard Tab
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .clickable { currentScreen = AppScreen.DASHBOARD }
+                                .testTag("bottom_nav_dashboard")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Dashboard,
                                 contentDescription = "Space",
-                                tint = Color(0xFF64748B),
+                                tint = Color(0xFF94A3B8),
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.height(2.dp))
@@ -748,30 +908,7 @@ fun ChatScreen(
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Medium,
-                                    color = Color(0xFF64748B),
-                                    letterSpacing = 0.5.sp
-                                )
-                            )
-                        }
-
-                        // Profile / History Tab
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable { coroutineScope.launch { drawerState.open() } }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.History,
-                                contentDescription = "History",
-                                tint = Color(0xFF64748B),
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "HISTORY",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = Color(0xFF64748B),
+                                    color = Color(0xFF94A3B8),
                                     letterSpacing = 0.5.sp
                                 )
                             )

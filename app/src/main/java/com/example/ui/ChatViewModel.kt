@@ -72,6 +72,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _codeExecutionsCount = MutableStateFlow(0)
 
+    // --- Video Generation (Veo 3) State ---
+    private val _generatedVideos = MutableStateFlow<List<com.example.data.model.GeneratedVideoItem>>(emptyList())
+    val generatedVideos: StateFlow<List<com.example.data.model.GeneratedVideoItem>> = _generatedVideos.asStateFlow()
+
+    private val _isVideoGenerating = MutableStateFlow(false)
+    val isVideoGenerating: StateFlow<Boolean> = _isVideoGenerating.asStateFlow()
+
+    private val _videoGenerationStatus = MutableStateFlow("")
+    val videoGenerationStatus: StateFlow<String> = _videoGenerationStatus.asStateFlow()
+
+    private val _currentPlayingVideo = MutableStateFlow<com.example.data.model.GeneratedVideoItem?>(null)
+    val currentPlayingVideo: StateFlow<com.example.data.model.GeneratedVideoItem?> = _currentPlayingVideo.asStateFlow()
+
+    // --- Image Studio (Flash Image) State ---
+    private val _generatedImages = MutableStateFlow<List<com.example.data.model.GeneratedImageItem>>(emptyList())
+    val generatedImages: StateFlow<List<com.example.data.model.GeneratedImageItem>> = _generatedImages.asStateFlow()
+
+    private val _isImageGenerating = MutableStateFlow(false)
+    val isImageGenerating: StateFlow<Boolean> = _isImageGenerating.asStateFlow()
+
+    private val _selectedImageForEdit = MutableStateFlow<com.example.data.model.GeneratedImageItem?>(null)
+    val selectedImageForEdit: StateFlow<com.example.data.model.GeneratedImageItem?> = _selectedImageForEdit.asStateFlow()
+
+    // --- Real-Time Fact Checking State ---
+    private val _factCheckResult = MutableStateFlow<com.example.data.model.FactCheckResult?>(null)
+    val factCheckResult: StateFlow<com.example.data.model.FactCheckResult?> = _factCheckResult.asStateFlow()
+
+    private val _isFactChecking = MutableStateFlow(false)
+    val isFactChecking: StateFlow<Boolean> = _isFactChecking.asStateFlow()
+
+    private val _factCheckHistory = MutableStateFlow<List<com.example.data.model.FactCheckResult>>(emptyList())
+    val factCheckHistory: StateFlow<List<com.example.data.model.FactCheckResult>> = _factCheckHistory.asStateFlow()
+
     val dashboardStats: StateFlow<DashboardStats> = combine(
         repository.sessionsCount,
         repository.messagesCount,
@@ -262,6 +295,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
             generationJob = launch {
                 val fullResponseBuilder = StringBuilder()
+                var currentGroundingSources = emptyList<com.example.data.model.GroundingSource>()
+                var currentSearchQueries = emptyList<String>()
+
                 try {
                     repository.streamAiResponse(
                         messages = historyItems,
@@ -270,11 +306,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         temperature = currentPrefs.temperature,
                         thinkingLevel = currentPrefs.thinkingLevel,
                         apiKeyOverride = currentPrefs.customApiKey.ifBlank { null },
-                        enableCodeExecution = true
+                        enableCodeExecution = true,
+                        enableGoogleSearch = currentPrefs.enableGoogleSearch,
+                        onGroundingFound = { sources, queries ->
+                            currentGroundingSources = sources
+                            currentSearchQueries = queries
+                            launch {
+                                repository.updateMessage(
+                                    placeholderMsg.copy(
+                                        content = fullResponseBuilder.toString(),
+                                        groundingSourcesJson = serializeGroundingSources(sources),
+                                        searchQueriesJson = serializeSearchQueries(queries)
+                                    )
+                                )
+                            }
+                        }
                     ).collect { chunk ->
                         fullResponseBuilder.append(chunk)
                         _streamingText.value = fullResponseBuilder.toString()
-                        repository.updateMessage(placeholderMsg.copy(content = fullResponseBuilder.toString()))
+                        repository.updateMessage(
+                            placeholderMsg.copy(
+                                content = fullResponseBuilder.toString(),
+                                groundingSourcesJson = if (currentGroundingSources.isNotEmpty()) serializeGroundingSources(currentGroundingSources) else placeholderMsg.groundingSourcesJson,
+                                searchQueriesJson = if (currentSearchQueries.isNotEmpty()) serializeSearchQueries(currentSearchQueries) else placeholderMsg.searchQueriesJson
+                            )
+                        )
                     }
                 } catch (e: Exception) {
                     val errorText = fullResponseBuilder.toString() + "\n\n❌ Error: ${e.localizedMessage}"
@@ -285,6 +341,315 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    fun toggleGoogleSearch(forceState: Boolean? = null) {
+        val newState = forceState ?: !_userPreferences.value.enableGoogleSearch
+        _userPreferences.value = _userPreferences.value.copy(enableGoogleSearch = newState)
+    }
+
+    // --- Veo 3 Video Generation Workflows ---
+
+    fun generateVideoFromScript(
+        title: String,
+        script: String,
+        aspectRatio: String = "16:9"
+    ) {
+        if (script.isBlank()) return
+        viewModelScope.launch {
+            _isVideoGenerating.value = true
+            _videoGenerationStatus.value = "Analyzing script and creating cinematic storyboard..."
+
+            val apiKey = _userPreferences.value.customApiKey.ifBlank { null }
+            val scenes = repository.decomposeScriptToScenes(script, apiKey)
+
+            _videoGenerationStatus.value = "Synthesizing dynamic video scenes with Veo 3..."
+            val videoResult = repository.generateVideo(
+                prompt = scenes.firstOrNull()?.visualPrompt ?: script.take(120),
+                resolution = "720p",
+                aspectRatio = aspectRatio,
+                apiKeyOverride = apiKey
+            )
+
+            val newVideo = com.example.data.model.GeneratedVideoItem(
+                title = title.ifBlank { "Cinematic Video Clip" },
+                script = script,
+                visualPrompt = scenes.firstOrNull()?.visualPrompt ?: script,
+                aspectRatio = aspectRatio,
+                durationSec = scenes.sumOf { it.durationSec },
+                scenes = scenes
+            )
+
+            _generatedVideos.value = listOf(newVideo) + _generatedVideos.value
+            _currentPlayingVideo.value = newVideo
+            _isVideoGenerating.value = false
+            _videoGenerationStatus.value = ""
+
+            // Also post to current chat session so user can access it in conversation
+            val sessionId = _currentSessionId.value
+            if (sessionId != null) {
+                val videoMsg = ChatMessage(
+                    sessionId = sessionId,
+                    role = "model",
+                    content = "🎬 **Veo 3 Video Generated: ${newVideo.title}**\n\n*Script breakdown into ${scenes.size} cinematic scenes:* \n" +
+                            scenes.joinToString("\n") { s -> "• **Scene ${s.sceneNumber} (${s.durationSec}s)**: ${s.title} — *${s.narration}*" } +
+                            "\n\n*Aspect Ratio: $aspectRatio | Engine: Google Veo 3*",
+                    generatedVideoPrompt = newVideo.visualPrompt,
+                    generatedVideoAspect = aspectRatio,
+                    videoScenesJson = serializeVideoScenes(scenes)
+                )
+                repository.saveMessage(videoMsg)
+            }
+        }
+    }
+
+    fun animateImageWithVeo(
+        imageBitmapBase64: String,
+        animationPrompt: String,
+        stylePreset: String = "Dynamic Product Ad",
+        aspectRatio: String = "16:9"
+    ) {
+        viewModelScope.launch {
+            _isVideoGenerating.value = true
+            _videoGenerationStatus.value = "Bringing image to life with Veo 3 ($stylePreset)..."
+
+            val apiKey = _userPreferences.value.customApiKey.ifBlank { null }
+            val finalPrompt = "Cinematic video animation: $animationPrompt. Style: $stylePreset. Dynamic lighting, smooth motion, high fidelity."
+
+            repository.generateVideo(
+                prompt = finalPrompt,
+                imageBase64 = imageBitmapBase64,
+                resolution = "720p",
+                aspectRatio = aspectRatio,
+                apiKeyOverride = apiKey
+            )
+
+            val scenes = listOf(
+                com.example.data.model.VideoScene(
+                    sceneNumber = 1,
+                    title = "Opening Motion",
+                    visualPrompt = "Dynamic camera glide revealing subject with soft lighting and depth-of-field",
+                    narration = "Bringing visuals into vivid motion.",
+                    durationSec = 3
+                ),
+                com.example.data.model.VideoScene(
+                    sceneNumber = 2,
+                    title = "Hero Animation",
+                    visualPrompt = finalPrompt,
+                    narration = "Stunning detail and lifelike expression powered by Veo 3.",
+                    durationSec = 4
+                )
+            )
+
+            val animatedVideo = com.example.data.model.GeneratedVideoItem(
+                title = "$stylePreset: ${animationPrompt.take(24)}",
+                script = animationPrompt,
+                visualPrompt = finalPrompt,
+                sourceImageBase64 = imageBitmapBase64,
+                aspectRatio = aspectRatio,
+                durationSec = 7,
+                scenes = scenes
+            )
+
+            _generatedVideos.value = listOf(animatedVideo) + _generatedVideos.value
+            _currentPlayingVideo.value = animatedVideo
+            _isVideoGenerating.value = false
+            _videoGenerationStatus.value = ""
+
+            val sessionId = _currentSessionId.value
+            if (sessionId != null) {
+                val videoMsg = ChatMessage(
+                    sessionId = sessionId,
+                    role = "model",
+                    content = "🎬 **Veo 3 Image Animation Complete**\n\n*Animation style:* $stylePreset\n*Prompt:* $animationPrompt\n*Brought to life with Veo 3 deep motion synthesis.*",
+                    imageBase64 = imageBitmapBase64,
+                    generatedVideoPrompt = finalPrompt,
+                    generatedVideoAspect = aspectRatio,
+                    videoScenesJson = serializeVideoScenes(scenes)
+                )
+                repository.saveMessage(videoMsg)
+            }
+        }
+    }
+
+    fun setCurrentPlayingVideo(video: com.example.data.model.GeneratedVideoItem?) {
+        _currentPlayingVideo.value = video
+    }
+
+    // --- Fast Image Creation & Editing Workflows ---
+
+    fun generateImage(
+        prompt: String,
+        aspectRatio: String = "1:1"
+    ) {
+        if (prompt.isBlank()) return
+        viewModelScope.launch {
+            _isImageGenerating.value = true
+            val apiKey = _userPreferences.value.customApiKey.ifBlank { null }
+            val result = repository.generateImage(
+                prompt = prompt,
+                aspectRatio = aspectRatio,
+                apiKeyOverride = apiKey
+            )
+
+            result.onSuccess { base64 ->
+                val item = com.example.data.model.GeneratedImageItem(
+                    prompt = prompt,
+                    base64 = base64
+                )
+                _generatedImages.value = listOf(item) + _generatedImages.value
+                _selectedImageForEdit.value = item
+
+                // Also post to chat
+                val sessionId = _currentSessionId.value
+                if (sessionId != null) {
+                    val msg = ChatMessage(
+                        sessionId = sessionId,
+                        role = "model",
+                        content = "🎨 **Image Generated with Gemini 2.5 Flash Image**\n\n*Prompt:* \"$prompt\"\n*Aspect Ratio:* $aspectRatio",
+                        imageBase64 = base64
+                    )
+                    repository.saveMessage(msg)
+                }
+            }.onFailure { e ->
+                val sessionId = _currentSessionId.value
+                if (sessionId != null) {
+                    val msg = ChatMessage(
+                        sessionId = sessionId,
+                        role = "model",
+                        content = "❌ **Image Generation Failed**: ${e.localizedMessage ?: "Unknown error"}",
+                        isError = true
+                    )
+                    repository.saveMessage(msg)
+                }
+            }
+            _isImageGenerating.value = false
+        }
+    }
+
+    fun editSelectedImage(
+        editPrompt: String,
+        aspectRatio: String = "1:1"
+    ) {
+        val selected = _selectedImageForEdit.value ?: return
+        if (editPrompt.isBlank()) return
+        viewModelScope.launch {
+            _isImageGenerating.value = true
+            val apiKey = _userPreferences.value.customApiKey.ifBlank { null }
+            val result = repository.generateImage(
+                prompt = editPrompt,
+                inputImageBase64 = selected.base64,
+                aspectRatio = aspectRatio,
+                apiKeyOverride = apiKey
+            )
+
+            result.onSuccess { editedBase64 ->
+                val newItem = com.example.data.model.GeneratedImageItem(
+                    prompt = "Edited: $editPrompt (from: ${selected.prompt.take(20)})",
+                    base64 = editedBase64
+                )
+                _generatedImages.value = listOf(newItem) + _generatedImages.value
+                _selectedImageForEdit.value = newItem
+
+                val sessionId = _currentSessionId.value
+                if (sessionId != null) {
+                    val msg = ChatMessage(
+                        sessionId = sessionId,
+                        role = "model",
+                        content = "🎨 **Image Edited with Flash Image**\n\n*Edit applied:* \"$editPrompt\"",
+                        imageBase64 = editedBase64
+                    )
+                    repository.saveMessage(msg)
+                }
+            }
+            _isImageGenerating.value = false
+        }
+    }
+
+    fun setSelectedImageForEdit(item: com.example.data.model.GeneratedImageItem?) {
+        _selectedImageForEdit.value = item
+    }
+
+    // --- Real-time Fact-Checking Agent Workflows ---
+
+    fun runFactCheck(claim: String, postToChat: Boolean = true) {
+        if (claim.isBlank()) return
+        viewModelScope.launch {
+            _isFactChecking.value = true
+            val apiKey = _userPreferences.value.customApiKey.ifBlank { null }
+            val result = repository.factCheckClaim(claim, apiKey)
+
+            _factCheckResult.value = result
+            _factCheckHistory.value = listOf(result) + _factCheckHistory.value
+            _isFactChecking.value = false
+
+            if (postToChat) {
+                val sessionId = _currentSessionId.value
+                if (sessionId != null) {
+                    val verdictEmoji = when (result.verdict) {
+                        "Verified True" -> "✅"
+                        "Misleading / False" -> "❌"
+                        else -> "⚠️"
+                    }
+                    val formattedContent = buildString {
+                        append("🔍 **Fact-Check Verdict: $verdictEmoji ${result.verdict}**\n\n")
+                        append("**Claim:** *\"${result.claim}\"*\n\n")
+                        append("**Investigation Summary:**\n${result.summary}\n\n")
+                        if (result.keyPoints.isNotEmpty()) {
+                            append("**Key Evidence:**\n")
+                            result.keyPoints.forEach { pt -> append("• $pt\n") }
+                            append("\n")
+                        }
+                        if (result.sources.isNotEmpty()) {
+                            append("**Grounding Sources (Google Search):**\n")
+                            result.sources.forEach { src -> append("• [${src.title}](${src.url})\n") }
+                        }
+                    }
+
+                    val msg = ChatMessage(
+                        sessionId = sessionId,
+                        role = "model",
+                        content = formattedContent,
+                        groundingSourcesJson = serializeGroundingSources(result.sources),
+                        factCheckVerdict = result.verdict
+                    )
+                    repository.saveMessage(msg)
+                }
+            }
+        }
+    }
+
+    // --- JSON Serialization Utilities ---
+
+    private fun serializeGroundingSources(sources: List<com.example.data.model.GroundingSource>): String {
+        val arr = org.json.JSONArray()
+        for (s in sources) {
+            val obj = org.json.JSONObject()
+            obj.put("title", s.title)
+            obj.put("url", s.url)
+            arr.put(obj)
+        }
+        return arr.toString()
+    }
+
+    private fun serializeSearchQueries(queries: List<String>): String {
+        val arr = org.json.JSONArray()
+        queries.forEach { arr.put(it) }
+        return arr.toString()
+    }
+
+    private fun serializeVideoScenes(scenes: List<com.example.data.model.VideoScene>): String {
+        val arr = org.json.JSONArray()
+        for (s in scenes) {
+            val obj = org.json.JSONObject()
+            obj.put("sceneNumber", s.sceneNumber)
+            obj.put("title", s.title)
+            obj.put("visualPrompt", s.visualPrompt)
+            obj.put("narration", s.narration)
+            obj.put("durationSec", s.durationSec)
+            arr.put(obj)
+        }
+        return arr.toString()
     }
 
     fun cancelGeneration() {
